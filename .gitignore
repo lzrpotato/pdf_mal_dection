@@ -8,8 +8,6 @@ __pycache__
 logging/
 lightning_logs/
 *.pickle
-dataset/
-!dataset/CLEAN_PDF_9000_files.zip
-!dataset/MALWARE_PDF_PRE_04-2011_10982_files.zip
+dataset/*
 temporary/*
 !.gitignore

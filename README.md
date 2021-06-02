@@ -5,4 +5,3 @@ Authors: Bill Luo
 ## Dataset source
 - <a href="http://contagiodump.blogspot.com/2013/03/16800-clean-and-11960-malicious-files.html">Contigo Malware Dump</a>
 
-
