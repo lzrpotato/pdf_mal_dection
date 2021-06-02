@@ -1,0 +1,12 @@
+*.zip
+*.pyc
+slurm/
+pdf.code-workspace
+__pycache__
+*.tgz
+*.log
+logging/
+lightning_logs/
+*.pickle
+dataset/
+temporary/*
