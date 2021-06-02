@@ -1,4 +1,4 @@
-#PDF Malware Detection Project
+# PDF Malware Detection Project
 - Date: 06/02/2021
 - Authors: Bill Luo
 
