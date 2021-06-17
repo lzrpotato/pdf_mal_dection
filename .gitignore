@@ -10,4 +10,5 @@ lightning_logs/
 *.pickle
 dataset/*
 temporary/*
+tensorboard_logs/*
 !.gitignore
