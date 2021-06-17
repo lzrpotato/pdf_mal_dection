@@ -2,6 +2,7 @@ import logging
 from typing import Any, List
 
 import pytorch_lightning as pl
+from pytorch_lightning import callbacks
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import EarlyStopping
 import torch
@@ -31,8 +32,8 @@ def get_trainer(gpus, epochs, earlystop):
         max_epochs=epochs,
         progress_bar_refresh_rate=0.5,
         flush_logs_every_n_steps=100,
-        logger=setup_logger,
-        early_stopping=earlystop,
+        logger=setup_logger(),
+        callbacks=[earlystop],
     )
     return trainer
 

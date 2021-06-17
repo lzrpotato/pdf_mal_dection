@@ -13,15 +13,15 @@ logger = logging.getLogger('dataset.pdfdataset')
 def get_project_root() -> Path:
     return Path(__file__).parent.parent.parent
 
-def byte_plot(bytes_array, word: int = 1) -> np.ndarray:
+def byte_plot(bytes_array, nbyte: int = 1) -> np.ndarray:
     n = len(bytes_array)
-    rem = n % word
+    rem = n % nbyte
     n -= rem
-    byte_map = np.frombuffer(bytes_array[0:n], dtype=np.dtype(f'i{word}'))
-    return byte_normal(byte_map, word)
+    byte_map = np.frombuffer(bytes_array[0:n], dtype=np.dtype(f'i{nbyte}'))
+    return byte_normal(byte_map, nbyte)
 
-def byte_normal(byte_map, word):
-    nbm = byte_map / ((256//word)-1)
+def byte_normal(byte_map, nbyte):
+    nbm = byte_map / ((256//nbyte)-1)
     return nbm
 
 def transition_matrix(transitions) -> np.ndarray:
@@ -90,10 +90,13 @@ def padding(X):
     return new_X
 
 class PDFDataset(BaseDataset):
-    def __init__(self, plot_strategy, word=1):
+    def __init__(self, plot_strategy, nbyte=1):
+        """
+        nbyte: number of bytes for each pixel
+        """
         super().__init__()
         self.name = 'pdf_dataset'
-        self.word = word
+        self.nbyte = nbyte
         rpath = get_project_root()
         self.dpath = os.path.join(rpath,'dataset')
         self.plot_strategy = plot_strategy
@@ -104,7 +107,7 @@ class PDFDataset(BaseDataset):
     @property
     def key_name(self):
         if self.plot_strategy == 'byte':
-            return f'{self.name}_{self.plot_strategy}_w={self.word}'
+            return f'{self.name}_{self.plot_strategy}_w={self.nbyte}'
         else:
             return f'{self.name}_{self.plot_strategy}'
 
@@ -114,10 +117,10 @@ class PDFDataset(BaseDataset):
 
         data_by_class = {'benign':None,'malicious':None}
         if self.plot_strategy == 'byte':
-            word = self.word
-            data_by_class['benign'] = load_pdf(f'byte_c=b_w={word}', pclean, byte_plot, word=word)
-            data_by_class['malicious'] = load_pdf(f'byte_c=m_w={word}', pmal, byte_plot, word=word)
-            logger.info(f'Using {self.plot_strategy} plot strategy with word size {word}')
+            nbyte = self.nbyte
+            data_by_class['benign'] = load_pdf(f'byte_c=b_nb={nbyte}', pclean, byte_plot, nbyte=nbyte)
+            data_by_class['malicious'] = load_pdf(f'byte_c=m_nb={nbyte}', pmal, byte_plot, nbyte=nbyte)
+            logger.info(f'Using {self.plot_strategy} plot strategy with byte size {nbyte}')
         elif self.plot_strategy == 'markov':
             data_by_class['benign'] = load_pdf('markov_c=b',pclean, markov_plot)
             data_by_class['malicious']  = load_pdf('markov_c=m',pmal, markov_plot)

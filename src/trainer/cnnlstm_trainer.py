@@ -8,12 +8,17 @@ from src.dataloader.ts_dataloader import TSDataLoader
 from src.model.CNN_LSTM import CNN_LSTM
 from src.trainer.base_trainer import BaseTrainer, get_trainer, setup_earlystop
 from src.util.cuda_status import get_num_gpus
+from src.database.expe_dm import Results, Database
 from torch.optim import Adam
 
 
 logger = logging.getLogger('trainer.CNNLSTMTrainer')
 
 def train(args):
+    # database setting
+    db = Database('exp_cnn_lstm.db')
+    exp = 1
+
     args.determ = True
     dl = TSDataLoader(batch_size=args.batch_size)
     dl.setup()
@@ -27,8 +32,17 @@ def train(args):
         args.gpus = get_num_gpus()
     logger.info(f'args: {args}')
     
+    dnn_mode = ''
+    if args.slide_window:
+        dnn_mode = 'sw'
+    else:
+        dnn_mode = 'grid'
+
     resuls = []
     for i in range(dl.nfold):
+        exp_keys = {'exp':exp, 'nclass': args.nclass, 'dnn': f'CNN_LSTM_{dnn_mode}', 'fold':i}
+        if db.check_finished(exp_keys):
+            continue
         model = CNNLSTMTrainer(args)
         
         early_stop = model.get_early_stop(patience=args.patience)
@@ -36,7 +50,10 @@ def train(args):
         
         dl.get_fold(i)
         trainer.fit(model,train_dataloader=dl.train_dataloader,val_dataloaders=dl.val_dataloader)
-        test_result = trainer.test(model,test_dataloaders=dl.test_dataloader)
+        test_result = trainer.test(model,test_dataloaders=dl.test_dataloader)[0]
+        
+        r = Results(exp,args.nclass,f'CNN_LSTM_{dnn_mode}',i, test_result['test acc'], test_result['fscore'],early_stop.stopped_epoch,early_stop.stopped_epoch-early_stop.patience)
+        db.save_results(r)
         resuls.append(test_result)
         logger.info('test results {}'.format(test_result))
     
@@ -71,6 +88,8 @@ def setup_arg():
                             help='Batch size')
     parser.add_argument('--debug', action='store_true', default=False,
                             help='Debug flag')
+    parser.add_argument('--slide-window', action='store_true', default=False,
+                            help='sliding window')
     return parser.parse_args()
 
 
@@ -78,10 +97,14 @@ class CNNLSTMTrainer(BaseTrainer):
     def __init__(self,args):
         super().__init__(args.nclass)
         self.args = args
-        grid_size = (self.args.width,self.args.height)
+        patch_size = (self.args.width,self.args.height)
+        if self.args.slide_window:
+            slide_window = (self.args.width*self.args.height, self.args.width*self.args.height/2)
+        else:
+            slide_window = None
         self.model = CNN_LSTM(self.args.nclass,self.args.nc,self.args.hidden,
                         batch_size=self.args.batch_size, num_layers=self.args.num_layers,
-                        grid_size=grid_size)
+                        patch_size=patch_size, slide_window=slide_window)
 
     def forward(self, batch):
         X, y = batch

@@ -44,11 +44,11 @@ class CNN_BasicBlock(nn.Module):
         return x
 
 class CNN2D(nn.Module):
-    def __init__(self, inplane, grid_size, dropout=0.5, pooling_type='maxpool'):
+    def __init__(self, inplane, patch_size, dropout=0.5, pooling_type='maxpool'):
         super().__init__()
 
         num_block = 1
-        i = grid_size[0]/4
+        i = patch_size[0]/4
         while i/4 > 1:
             i /= 4
             num_block += 1
@@ -141,7 +141,8 @@ class CNN_LSTM(nn.Module):
         hidden, 
         batch_size, 
         num_layers,
-        grid_size=(256,256)
+        patch_size=(256,256),
+        slide_window=(256*256,256*256/2)
     ):
         super().__init__()
         self.nclass = nclass
@@ -149,10 +150,11 @@ class CNN_LSTM(nn.Module):
         self.hidden = hidden
         self.batch_size = batch_size
         self.num_layers = num_layers
-        self.grid_size = grid_size
+        self.patch_size = patch_size
+        self.slide_window = slide_window
         # input C_in, W, H, output C_out, W_o, H_o
-        num_block = grid_size[0]//4
-        self.cnn_repre = CNN2D(inplane=nc,grid_size=grid_size)
+        num_block = patch_size[0]//4
+        self.cnn_repre = CNN2D(inplane=nc,patch_size=patch_size)
         # input 
         self.lstm = LSTM_rnn(self.cnn_repre.out_dim,self.hidden,self.num_layers,1,pool=True)
         
@@ -173,23 +175,45 @@ class CNN_LSTM(nn.Module):
         return nn.Sequential(*layers)
 
     def _pad_to_grid(self, seq: torch.Tensor):
+        """
+        pad pdf file to fit the grid shape
+        """
         batch, c, seq_len = seq.size()
-        h,w = self.grid_size
+        h,w = self.patch_size
         need = h*w - seq_len % (h*w)
         logger.debug('need {}'.format(need))
         seq = F.pad(seq,(0,need))
         return seq
     
     def _view_to_grid(self, seq: torch.Tensor):
+        """
+        change the pdf file to grid view
+        """
+        seq = self._pad_to_grid(seq)
         batch, c, seq_len = seq.size()
-        h,w = self.grid_size
+        h,w = self.patch_size
+        # ng number of patches in the grid
         ng = seq_len // (h*w)
         return seq.view(batch*ng, c, h,w), ng
+
+    def _view_slide_window(self, seq: torch.Tensor):
+        """
+        change the pdf file to sliding window view
+        """
+        seq = self._pad_to_grid(seq)
+        batch, c, seq_len = seq.size()
+        h,w = self.patch_size
+        window, stride = self.slide_window
+        logger.debug(f'_view_slide_window {seq.shape}' )
+        x = seq.unfold(dimension=2,size=int(window),step=int(stride))
+        batch, c, nw, ws = x.size()
+        logger.debug(f'_view_slide_window x {x.shape}' )
+        x = x.view(batch*nw,c,h,w)
+        return x, nw
 
     def forward_(self, x):
         batch, c, seq_len = x.size()
         logger.debug('{} {} {}'.format(batch, c, seq_len))
-        x = self._pad_to_grid(x)
         c_in, ng = self._view_to_grid(x)
         c_out = self.cnn_repre(c_in)
     
@@ -204,12 +228,17 @@ class CNN_LSTM(nn.Module):
     def forward(self, x):
         batch = len(x)
         r_outs = []
+        # for each pdf file, we divide it into non-overlap patches
         for i in x:
             seq_len = i.size()[0]
             logger.debug('{}'.format(seq_len))
             xi = i.view(1,self.nc,seq_len)
-            xi = self._pad_to_grid(xi)
-            c_in, ng = self._view_to_grid(xi)
+
+            if self.slide_window is None:
+                c_in, ng = self._view_to_grid(xi)
+            else:
+                c_in, ng = self._view_slide_window(xi)
+            
             c_out = self.cnn_repre(c_in)
         
             r_in = c_out.view(1,ng,-1)
