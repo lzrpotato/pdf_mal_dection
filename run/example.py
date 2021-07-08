@@ -12,13 +12,19 @@ from torch.optim.lr_scheduler import StepLR
 class Net(nn.Module):
     def __init__(self):
         super(Net, self).__init__()
-        self.conv1 = nn.Conv2d(1, 32, 3, 1)
+        # image shape (batch=32, channel=1, width=256, height=256)
+        self.conv1 = nn.Conv2d(in_channels=1, out_channels=32, kernel_size=3, stride=1,padding=0)
+        # conv1 output (batch=32,channel=32, width_conv1=254, height_conv2=254)
+        # (256+2*0 -1*(3-1) -1) /1 + 1 = 254
         self.conv2 = nn.Conv2d(32, 64, 3, 1)
+        # (batch=32,channel=64, width_conv1=252, height_conv2=252)
+        # (254+2*0 -1*(3-1) -1) /1 + 1 = 252
         self.dropout1 = nn.Dropout(0.25)
         self.dropout2 = nn.Dropout(0.5)
+        # 
         self.fc1 = nn.Linear(9216, 128)
         self.fc2 = nn.Linear(128, 10)
-        # batch * 10 
+        # batch * 10
         # 0-9, 
         # one-hot encoding: 
         # 0 -> [1,0,0,0,0,0,0,0,0,0]
@@ -27,12 +33,19 @@ class Net(nn.Module):
 
     def forward(self, x):
         x = self.conv1(x)
+        print(x.shape)
         x = F.relu(x)
         x = self.conv2(x)
+        print(x.shape)
         x = F.relu(x)
         x = F.max_pool2d(x, 2)
+        print('pooling ',x.shape)
+        # [bs=32, c=64, h=126, w=126]
         x = self.dropout1(x)
         x = torch.flatten(x, 1)
+        print('flatten ',x.shape)
+        # 64*126*126 = 1016064
+        # flatten torch.Size([32, 1016064])
         x = self.fc1(x)
         x = F.relu(x)
         x = self.dropout2(x)
@@ -141,4 +154,7 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    #main()
+    input = torch.randn((32,1,32,32))
+    m = Net()
+    output = m(input)

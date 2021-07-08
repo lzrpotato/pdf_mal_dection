@@ -2,31 +2,18 @@ import logging
 
 import pytorch_lightning as pl
 import torch
-from src.dataset.pdf_dataset import PDFDataset
-from src.dataset.pdf_w2v_dataset import PDFW2VDataset
+from src.dataset.pdf_embedding_dataset import PDFEmbeddingDataset
 from src.util.model_selection import DatasetSpliter
 from torch.utils.data.dataloader import DataLoader
 
-logger = logging.getLogger('dataloader.ts_dataloader')
+logger = logging.getLogger('dataloader.word2vec_dataloader')
 
 
-def collate_fn(batch):
-    X = []
-    Label = []
-    for data in batch:
-        x, label = data
-        X.append(x)
-        Label.append(label)
-    
-    label = torch.stack(Label)
-    logger.debug('[collate_fn] {}'.format(label))
-
-    return X, label
-
-class TSDataLoader(pl.LightningDataModule):
-    def __init__(self, dataset_name, batch_size=32, shuffle=True,deterministic=True,num_workers=8):
+class Word2vecDataloader(pl.LightningDataModule):
+    def __init__(self, context_size, nbyte, batch_size=32, shuffle=True,deterministic=True,num_workers=8):
         super().__init__()
-        self.dataset_name = dataset_name
+        self.nbyte = nbyte
+        self.context_size = context_size
         self.batch_size=batch_size
         self.shuffle = shuffle
         self.determ = deterministic
@@ -38,20 +25,11 @@ class TSDataLoader(pl.LightningDataModule):
         pass
     
     def setup(self):
-        if self.dataset_name == 'word2vec_skipgram':
-            dataset = PDFW2VDataset(self.dataset_name)
-        elif self.dataset_name == 'word2vec_cbow':
-            dataset = PDFW2VDataset(self.dataset_name)
-        elif self.dataset_name == 'byte':
-            dataset = PDFDataset(self.dataset_name)
+        dataset = PDFEmbeddingDataset(self.context_size,self.nbyte)
         self.dss = DatasetSpliter(dataset, dataset.key_name, strategy='tvt', nfold=10, deterministic=self.determ)
         self.dss.setup()
-        self.nclass = dataset.nclass
-        self.nc = dataset.nc
-        self.class_to_index = dataset.class_to_index
-        self.maxlen = dataset.fea_size
+        self.vocab_size = dataset.vocab_size
         self.nfold = self.dss.nfold
-        self.dataset = dataset
 
     def cv_gen(self) -> int:
         for i, data in enumerate(self.dss.split()):
@@ -68,7 +46,6 @@ class TSDataLoader(pl.LightningDataModule):
                 pin_memory=True,
                 drop_last=False,
                 shuffle=shuffle,
-                collate_fn=collate_fn,
                 num_workers=self.num_workers)
         return dataloader
 

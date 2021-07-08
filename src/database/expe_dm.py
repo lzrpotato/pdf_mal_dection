@@ -1,5 +1,6 @@
 import sqlite3 as lite
 import os
+import pandas as pd
 from dataclasses import dataclass
 import logging
 logger = logging.getLogger("database.expe_dm")
@@ -10,10 +11,16 @@ class Results():
     nclass: int
     dnn: str
     fold: int
+    dataset: str
     acc: float
-    f1: float
+    f1micro: float
+    f1macro: float
+    fbenign: float
+    fmal: float
     stopepoch: int
     bestepoch: int
+    label: str
+    time: str
 
 
 class Database():
@@ -38,15 +45,20 @@ class Database():
             ('nclass','integer','not null'),
             ('dnn','integer','not null'),
             ('fold','integer','not null'),
-            ('acc','integer','not null'),
-            ('f1','integer','not null'),
+            ('dataset','text','not null'),
+            ('acc','real','not null'),
+            ('f1micro','real','not null'),
+            ('f1macro','real','not null'),
+            ('fbenign','real','not null'),
+            ('fmal','real','not null'),
             ('stopepoch','integer',''),
             ('bestepoch','integer',''),
+            ('label','text',''),
+            ('time','text ','')
         ]
-        self.columns = ['exp','nclass','dnn','fold','acc','f1','stopepoch','bestepoch']
-        self.col_type = ['integer', 'integer','text','integer','real','real','integer','integer']
-        self.col_null = ['not null','not null',' not null', 'not null','','','']
-        self.keys = ['exp','nclass','dnn','fold']
+        self.columns = [e[0] for e in self.table_entries]
+        #self.columns = ['exp','nclass','dnn','fold','dataset','acc','f1','stopepoch','bestepoch','label']
+        self.keys = ['exp','nclass','dnn','fold','dataset']
         create_tb_sql = self.build_create_table_sql(self.table_name,self.table_entries,self.keys)
         self.create_database(create_tb_sql)
 
@@ -101,7 +113,7 @@ class Database():
             cur.execute('PRAGMA busy_timeout=%d' % int(self.timeout))
             cur.execute('begin')
 
-            insert_str = f"""insert into results ({','.join(self.columns)}) \n""" + \
+            insert_str = f"""insert into {self.table_name} ({','.join(self.columns)}) \n""" + \
                          f"""values ({','.join(['?' for i in range(len(self.columns))])}) \n""" + \
                          f"""on conflict({','.join(self.keys)}) \n""" + \
                          f"""do update \n""" +  \
@@ -112,8 +124,9 @@ class Database():
                         ([results.__dict__[c] for c in self.columns])
                     )
             conn.commit()
+            logger.info(f'[save_results] successful\n {results}')
         except lite.Error as e:
-            logger.error('[save_status] error {}'.format(e.args[0]))
+            logger.error('[save_results] error {}'.format(e.args[0]))
 
         finally:
             if conn:
@@ -127,7 +140,7 @@ class Database():
             cur.execute('PRAGMA busy_timeout=%d' % int(self.timeout))
             cur.execute('begin')
 
-            insert_str = f"""insert into results ({','.join(self.columns)}) \n""" + \
+            insert_str = f"""insert into {self.table_name} ({','.join(self.columns)}) \n""" + \
                          f"""values ({','.join(['?' for i in range(len(self.columns))])}) \n""" + \
                          f"""on conflict({','.join(self.keys)}) \n""" + \
                          f"""do update \n""" +  \
@@ -153,7 +166,7 @@ class Database():
             cur = conn.cursor()
             cur.execute('PRAGMA busy_timeout=%d' % (self.timeout))
             
-            select_str = f"""select * from results where {' and '.join([k+'=?' for k in self.keys])};"""
+            select_str = f"""select * from {self.table_name} where {' and '.join([k+'=?' for k in self.keys])};"""
             cur.execute(select_str,
                 ([p[c] for c in self.keys])
             )
@@ -174,11 +187,107 @@ class Database():
             return False
         return True
         
+    def read_all(self):
+        res = None
+        conn = None
+        try:
+            conn = self.connect()
+            cur = conn.cursor()
+            cur.execute('PRAGMA busy_timeout=%d' % (self.timeout))
+            
+            select_str = f"""select * from {self.table_name}\n""" + \
+                         f"""order by {','.join(self.keys)};"""
+            cur.execute(select_str)
+            
+            res = cur.fetchall()
+        except lite.Error as e:
+            logger.error('[read_status] error {}'.format(e.args[0]))
 
-if __name__ == '__main__':
+        finally:
+            if conn:
+                conn.close()
+        
+        return res
+
+    def read_by_keys(self, query):
+        res = None
+        conn = None
+        try:
+            conn = self.connect()
+            cur = conn.cursor()
+            cur.execute('PRAGMA busy_timeout=%d' % (self.timeout))
+            
+            select_str = f"""select * from {self.table_name}\n""" + \
+                         f"""where { ' and '.join([k+'=?' for k in query.keys()]) }\n""" + \
+                         f"""order by {','.join(self.keys)};"""
+
+            cur.execute(select_str,
+                tuple(query.values())
+            )
+            
+            res = cur.fetchall()
+        except lite.Error as e:
+            logger.error('[read_status] error {}'.format(e.args[0]))
+
+        finally:
+            if conn:
+                conn.close()
+        
+        return res
+
+    def get_by_query_as_dataframe(self, query):
+        res = self.read_by_keys(query)
+        if res is None:
+            return None
+
+        df = pd.DataFrame(res, columns=self.columns)
+        return df
+
+    def get_all_as_dataframe(self):
+        res = self.read_all()
+        if res is None:
+            return None
+        
+        df = pd.DataFrame(res, columns=self.columns)
+        return df
+
+    def delete_all_entry(self):
+        conn = None
+        is_success = True
+        answer = input(f'Do you want to delete all results in {self.db_path} for table {self.table_name}? yes/no\n')
+        if answer == 'yes':
+            pass
+        else:
+            logger.info('exit without deleting')
+            return
+        try:
+            conn = self.connect()
+            cur = conn.cursor()
+            cur.execute('PRAGMA busy_timeout=%d' % (self.timeout))
+            
+            select_str = f"""delete from {self.table_name};"""
+            cur.execute(select_str)
+            
+            conn.commit()
+            logger.info(f'records are deleted successfully.')
+        except lite.Error as e:
+            logger.error('[read_status] error {}'.format(e.args[0]))
+            is_success = False
+        finally:
+            if conn:
+                conn.close()
+        
+        return is_success
+
+
+def _test():
     db_name = 'exp_test1.db'
     ss = Database(db_name)
-    p = {'exp':1,'acc':1.0,'f1':1.0,'dnn':'CNN','nclass':4,'fold':0,'stopepoch':0,'bestepoch':0,}
+    p = {'exp':1,'acc':1.0,'f1':1.0,'dnn':'CNN','nclass':4,'fold':0,'stopepoch':0,'bestepoch':0,'label':''}
+    r = Results(**p)
+    ss.save_results(r)
+    ss.save_status(p)
+    p = {'exp':2,'acc':1.0,'f1':1.0,'dnn':'CNN','nclass':4,'fold':0,'stopepoch':0,'bestepoch':0,'label':''}
     r = Results(**p)
     ss.save_results(r)
     ss.save_status(p)
@@ -190,3 +299,15 @@ if __name__ == '__main__':
     param = {'exp':1,'nclass':4,'dnn':'CNN','fold':1}
     res = ss.check_finished(param)
     print(res)
+    res = ss.read_all()
+    print(res)
+    ss.get_all_as_dataframe()
+    res = ss.read_by_keys({'exp':1,'dnn':'CNN','nclass':4})
+    print(res)
+    res = ss.get_by_query_as_dataframe({'exp':0,'dnn':'CNN','nclass':4})
+    print(res)
+
+
+if __name__ == '__main__':
+    _test()
+

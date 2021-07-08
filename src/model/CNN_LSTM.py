@@ -87,7 +87,7 @@ class CNN2D(nn.Module):
         return X
 
 
-def get_lstm(input_size,hidden_size=32,num_layers=1,batch_first=True,dropout=0.5,bidirectional=False):
+def get_lstm(input_size,hidden_size=32,num_layers=1,batch_first=True,dropout=0.5,bidirectional=True):
     return nn.LSTM(input_size=input_size,
             hidden_size=hidden_size,
             num_layers=num_layers,
@@ -99,6 +99,7 @@ class LSTM_rnn(nn.Module):
     def __init__(self,
         in_size,
         hidden,
+        bidirection,
         num_layers,
         batch_size,
         pool,
@@ -106,13 +107,18 @@ class LSTM_rnn(nn.Module):
         super().__init__()
         self.in_size = in_size
         self.hidden = hidden
+        self.bidirection = bidirection
         self.num_layers = num_layers
         self.batch_size = batch_size
         self.pool = pool
-        self.lstm = get_lstm(self.in_size,self.hidden,self.num_layers)
-        self.h0 = torch.zeros((self.num_layers,self.batch_size,self.hidden),dtype=torch.float32)
-        self.c0 = torch.zeros((self.num_layers,self.batch_size,self.hidden),dtype=torch.float32)
-
+        self.lstm = get_lstm(self.in_size,self.hidden,self.num_layers,bidirectional=bidirection)
+        if self.bidirection:
+            D = 2
+        else:
+            D = 1
+        self.h0 = torch.zeros((self.num_layers*D,self.batch_size,self.hidden),dtype=torch.float32)
+        self.c0 = torch.zeros((self.num_layers*D,self.batch_size,self.hidden),dtype=torch.float32)
+        logger.debug('in_size {} hidden {} nl {} bs {} pool {}'.format(in_size,hidden,num_layers,batch_size,pool))
         if pool:
             self.pooling = nn.AdaptiveAvgPool1d(1)
         
@@ -122,7 +128,7 @@ class LSTM_rnn(nn.Module):
     def forward(self, x):
         h0 = self.h0.to(x.device)
         c0 = self.c0.to(x.device)
-        logger.debug('lstm forward {} {}'.format(x.size(), h0.size()))
+        logger.debug('lstm forward {} {} {}'.format(x.size(), h0.size(), c0.size()))
         out, (hn,cn) = self.lstm(x,(h0,c0))
         if self.pool:
             logger.debug('lstm out {}'.format(out.size()))
@@ -139,6 +145,7 @@ class CNN_LSTM(nn.Module):
         nclass, 
         nc, 
         hidden, 
+        bidirection,
         batch_size, 
         num_layers,
         patch_size=(256,256),
@@ -148,6 +155,7 @@ class CNN_LSTM(nn.Module):
         self.nclass = nclass
         self.nc = nc
         self.hidden = hidden
+        self.bidirection = bidirection
         self.batch_size = batch_size
         self.num_layers = num_layers
         self.patch_size = patch_size
@@ -156,7 +164,7 @@ class CNN_LSTM(nn.Module):
         num_block = patch_size[0]//4
         self.cnn_repre = CNN2D(inplane=nc,patch_size=patch_size)
         # input 
-        self.lstm = LSTM_rnn(self.cnn_repre.out_dim,self.hidden,self.num_layers,1,pool=True)
+        self.lstm = LSTM_rnn(self.cnn_repre.out_dim,self.hidden,self.bidirection,self.num_layers,1,pool=True)
         
         self.classifier = self.make_classifier(self.lstm.out_dim,nclass)
 
@@ -208,7 +216,7 @@ class CNN_LSTM(nn.Module):
         x = seq.unfold(dimension=2,size=int(window),step=int(stride))
         batch, c, nw, ws = x.size()
         logger.debug(f'_view_slide_window x {x.shape}' )
-        x = x.view(batch*nw,c,h,w)
+        x = x.reshape(batch*nw,c,h,w)
         return x, nw
 
     def forward_(self, x):
@@ -233,7 +241,6 @@ class CNN_LSTM(nn.Module):
             seq_len = i.size()[0]
             logger.debug('{}'.format(seq_len))
             xi = i.view(1,self.nc,seq_len)
-
             if self.slide_window is None:
                 c_in, ng = self._view_to_grid(xi)
             else:
@@ -243,6 +250,7 @@ class CNN_LSTM(nn.Module):
         
             r_in = c_out.view(1,ng,-1)
             logger.debug('in {} cout {} rin {}'.format(c_in.size(), c_out.size(), r_in.size()))
+            
             r_out = self.lstm(r_in)
             logger.debug('r_out {}'.format(r_out.size()))
             r_outs.append(r_out)

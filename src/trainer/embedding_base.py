@@ -6,7 +6,8 @@ from pytorch_lightning import callbacks
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import EarlyStopping
 import torch
-
+from torchmetrics.classification import Accuracy
+from torchmetrics.classification import F1
 
 logger = logging.getLogger('training.base_trainer')
 
@@ -39,11 +40,10 @@ def get_trainer(gpus, epochs, earlystop, exp_name, version=None):
     return trainer
 
 
-class BaseTrainer(pl.LightningModule):
+class EmbeddingBase(pl.LightningModule):
     def __init__(self):
-        super(BaseTrainer,self).__init__()
-
-
+        super(EmbeddingBase,self).__init__()
+        
     def forward(self, batch):
         pass 
 
@@ -53,10 +53,7 @@ class BaseTrainer(pl.LightningModule):
     def configure_optimizers(self):
         pass
 
-    def metrics(self, phase, pred, batch):
-        pass
-
-    def metrics_end(self, phase):
+    def metrics(self, pred, batch):
         pass
 
     def shared_my_step(self, batch, batch_nb, phase):
@@ -70,12 +67,12 @@ class BaseTrainer(pl.LightningModule):
         self.log(f'{phase}_loss_step', loss, sync_dist=True, prog_bar=True)
         self.log(f'{phase}_loss_epoch', loss, sync_dist=True, on_step=False, on_epoch=True, prog_bar=True)
 
-        self.metrics(phase, y_hat, batch)
+        self.metrics(y_hat, batch)
         
         return loss
 
     def epoch_end(self, outputs, phase):
-        self.metrics_end(phase)
+        pass
 
     def training_step(self, batch, batch_nb):
         phase = 'train'
@@ -105,13 +102,11 @@ class BaseTrainer(pl.LightningModule):
 
         self.log(f'{phase}_loss_step', loss, sync_dist=True, prog_bar=True)
         self.log(f'{phase}_loss_epoch', loss, sync_dist=True, on_step=False, on_epoch=True, prog_bar=True)
-        self.metrics(phase, y_hat, batch)
-        
+        self.metrics(y_hat, batch)
         return 
 
     def test_epoch_end(self, outputs: List[Any]) -> None:
         phase = 'test'
-        self.epoch_end(outputs, phase)
-        
+
     def get_early_stop(self, patience):
-        return setup_earlystop('val_acc_epoch', patience, 'max')
+        return setup_earlystop('val_loss_epoch', patience, 'min')

@@ -2,13 +2,14 @@ from .base_dataset import BaseDataset
 import os
 from pathlib import Path
 from typing import Dict
+from gensim.models import KeyedVectors
 import numpy as np
 from tqdm import tqdm
 import torch
 from src.util.decorator import buffer_value
 import logging
 
-logger = logging.getLogger('dataset.pdfdataset')
+logger = logging.getLogger('dataset.pdfw2vdataset')
 
 def get_project_root() -> Path:
     return Path(__file__).parent.parent.parent
@@ -22,32 +23,10 @@ def byte_stream_to_int_array(bytes_array, nbyte):
     integer_array = np.frombuffer(bytes_array, dtype=np.dtype(f'uint{nbyte*8}'))
     return integer_array
 
-def byte_plot(bytes_array, nbyte: int = 1) -> np.ndarray:
-    byte_map = byte_stream_to_int_array(bytes_array,nbyte)
-    return byte_normal(byte_map, nbyte)
-
-def byte_normal(byte_map, nbyte):
-    nbm = byte_map / ((256//nbyte)-1)
-    return nbm
-
-def transition_matrix(transitions) -> np.ndarray:
-    n = 1+ max(transitions) #number of states
-
-    M = [[0]*n for _ in range(n)]
-
-    for (i,j) in zip(transitions,transitions[1:]):
-        M[i][j] += 1
-
-    #now convert to probabilities:
-    for row in M:
-        s = sum(row)
-        if s > 0:
-            row[:] = [f/s for f in row]
-    return np.array(M)
-
-def markov_plot(bytes_array):
-    M = transition_matrix(bytes_array)
-    return M
+def embedding_plot(bytes_array, keyvectors, nbyte):
+    int_array = byte_stream_to_int_array(bytes_array, nbyte)
+    embedding_array = keyvectors[int_array]
+    return embedding_array
 
 @buffer_value(protocol='joblib',folder='temporary')
 def load_pdf(path, plot, **param):
@@ -95,42 +74,50 @@ def padding(X):
         
     return new_X
 
-class PDFDataset(BaseDataset):
+class PDFW2VDataset(BaseDataset):
     def __init__(self, plot_strategy, nbyte=1):
         """
         nbyte: number of bytes for each pixel
         """
         super().__init__()
-        self.name = 'pdf_dataset'
+        self.name = 'pdf_w2v_dataset'
         self.nbyte = nbyte
         rpath = get_project_root()
         self.dpath = os.path.join(rpath,'dataset')
         self.plot_strategy = plot_strategy
+        self.keyvectors = self.load_keyvectors(plot_strategy)
         logger.info('Setup PDF Dataset')
         self._load()
         logger.info('Setup PDF Dataset Finished')
 
+    def load_keyvectors(self, plot_strategy):
+        kw = None
+        if plot_strategy == 'word2vec_skipgram':
+            kw = KeyedVectors.load('embedding_weight/pdf_malware_word2vec_skipgram.wordvectors')
+        elif plot_strategy == 'word2vec_cbow':
+            kw = KeyedVectors.load('embedding_weight/pdf_malware_word2vec_skipgram.wordvectors')
+        
+        return kw
+
     @property
     def key_name(self):
-        if self.plot_strategy == 'byte':
-            return f'{self.name}_{self.plot_strategy}_nb={self.nbyte}'
-        else:
-            return f'{self.name}_{self.plot_strategy}'
+        return f'{self.name}_{self.plot_strategy}_nb={self.nbyte}'
 
     def _load(self):
         pclean = os.path.join(self.dpath,'CLEAN_PDF_9000_files')
         pmal = os.path.join(self.dpath,'MALWARE_PDF_PRE_04-2011_10982_files')
 
+        nbyte = self.nbyte
+
         data_by_class = {'benign':None,'malicious':None}
-        if self.plot_strategy == 'byte':
-            nbyte = self.nbyte
-            data_by_class['benign'] = load_pdf(f'byte_c=b_nb={nbyte}', pclean, byte_plot, nbyte=nbyte)
-            data_by_class['malicious'] = load_pdf(f'byte_c=m_nb={nbyte}', pmal, byte_plot, nbyte=nbyte)
+        if self.plot_strategy == 'word2vec_skipgram':
+            data_by_class['benign'] = load_pdf(f'w2vskipgram_c=b_nb={nbyte}', pclean, embedding_plot, keyvectors=self.keyvectors, nbyte=nbyte)
+            data_by_class['malicious'] = load_pdf(f'w2vskipgram_c=m_nb={nbyte}', pmal, embedding_plot, keyvectors=self.keyvectors, nbyte=nbyte)
             logger.info(f'Using {self.plot_strategy} plot strategy with byte size {nbyte}')
-        elif self.plot_strategy == 'markov':
-            data_by_class['benign'] = load_pdf('markov_c=b',pclean, markov_plot)
-            data_by_class['malicious']  = load_pdf('markov_c=m',pmal, markov_plot)
-            logger.info(f'Using {self.plot_strategy} plot strategy')
+        elif self.plot_strategy == 'word2vec_cbow':
+            data_by_class['benign'] = load_pdf(f'w2vcbow_c=b_nb={nbyte}',pclean, embedding_plot, keyvectors=self.keyvectors, nbyte=nbyte)
+            data_by_class['malicious']  = load_pdf(f'w2vcbow_c=m_nb={nbyte}',pmal, embedding_plot, keyvectors=self.keyvectors, nbyte=nbyte)
+            logger.info(f'Using {self.plot_strategy} plot strategy with byte size {nbyte}')
 
 
         ### class length
@@ -156,7 +143,7 @@ class PDFDataset(BaseDataset):
         ### feature size
         self.fea_size = self.X[0].shape[0]
         ### channel size
-        self.nc = 1
+        self.nc = self.X[0].shape[1]
 
         logger.info(f'feature size {self.fea_size}, label size {len(labels)}, benign {nb} mal {nm}')
 

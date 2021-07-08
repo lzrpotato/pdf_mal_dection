@@ -10,7 +10,7 @@ cnn:
 	sbatch slurm/slurm_cnnlstm.sh
 
 cslrum:
-	rm slurm/slurm_out/#
+	rm slurm/slurm_out/*
 
 clog:
-	rm -r lightning_logs/#
+	rm -r lightning_logs/*

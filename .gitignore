@@ -11,4 +11,12 @@ lightning_logs/
 dataset/*
 temporary/*
 tensorboard_logs/*
+data/*
+*.db
+embedding_weight/
+logging/
+*.png
+kfold/*
+examples/
+*.7z
 !.gitignore
