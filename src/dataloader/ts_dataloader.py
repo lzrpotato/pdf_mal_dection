@@ -24,10 +24,11 @@ def collate_fn(batch):
     return X, label
 
 class TSDataLoader(pl.LightningDataModule):
-    def __init__(self, dataset_name, batch_size=32, shuffle=True,deterministic=True,num_workers=8):
+    def __init__(self, dataset_name, batch_size=32, nfold=10, shuffle=True,deterministic=True,num_workers=8):
         super().__init__()
         self.dataset_name = dataset_name
         self.batch_size=batch_size
+        self.nfold = nfold
         self.shuffle = shuffle
         self.determ = deterministic
         self.num_workers = num_workers
@@ -44,7 +45,7 @@ class TSDataLoader(pl.LightningDataModule):
             dataset = PDFW2VDataset(self.dataset_name)
         elif self.dataset_name == 'byte':
             dataset = PDFDataset(self.dataset_name)
-        self.dss = DatasetSpliter(dataset, dataset.key_name, strategy='tvt', nfold=10, deterministic=self.determ)
+        self.dss = DatasetSpliter(dataset, dataset.key_name, strategy='tvt', nfold=self.nfold, deterministic=self.determ)
         self.dss.setup()
         self.nclass = dataset.nclass
         self.nc = dataset.nc

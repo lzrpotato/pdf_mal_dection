@@ -29,20 +29,14 @@ else:
     filehandler = logging.FileHandler(f"logging/cnnlstm_{time.strftime('%Y-%m-%d-%H:%M:%S')}_{os.getpid()}")
 filehandler.setFormatter(formatter)
 logger.addHandler(filehandler)
+logger.setLevel(logging.DEBUG)
 
-def test_cnn_lstm():
-    i = torch.ones((1,1,2048000),dtype=torch.float32)
-    tsm = CNN_LSTM(2,1,64,1,1)
-
-def test_cnnlstmtrainer():
-    from src.trainer.cnnlstm_trainer import train, setup_arg
-    args = setup_arg()
-    if args.debug:
-        logger.setLevel(logging.DEBUG)
-    else:
-        logger.setLevel(logging.INFO)
-    train(args)
+def pdf_dataloader():
+    from src.dataloader.ts_dataloader import TSDataLoader
+    dl = TSDataLoader('byte')
+    dl.setup()
+    dl.get_fold(0)
     
 
 if __name__ == '__main__':
-    test_cnnlstmtrainer()
+    pdf_dataloader()

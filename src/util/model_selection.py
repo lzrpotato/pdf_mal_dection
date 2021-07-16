@@ -1,5 +1,6 @@
 import os
 from typing import List, Tuple
+from collections import defaultdict
 
 import pandas as pd
 import numpy as np
@@ -167,7 +168,14 @@ class DatasetSpliter():
         else:
             logger.info('setup Dataspliter StratifiedKFold')
             self.kf = StratifiedKFold(n_splits=self.nfold,shuffle=True)
-            
+    
+    def _count_by_class(self, phase, dataset):
+        count = defaultdict(int)
+
+        for data in dataset:
+            count[data[-1].item()] += 1
+        logger.info('[{} class] {}'.format(phase, [ (k,v) for k,v in sorted(count.items(), key=lambda item: item[0])]))
+
     def _kfold_index_build(self, dataset, nfold, strategy):
         if not os.path.isdir(self.kfold_path):
             os.mkdir(self.kfold_path)
@@ -221,6 +229,9 @@ class DatasetSpliter():
         train = Subset(dataset, train_index)
         val = Subset(dataset, val_index)
         test = Subset(dataset, test_index)
+        self._count_by_class('train',train)
+        self._count_by_class('val',val)
+        self._count_by_class('test',test)
 
         return train, val, test
 

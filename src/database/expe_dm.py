@@ -10,8 +10,9 @@ class Results():
     exp: int
     nclass: int
     dnn: str
-    fold: int
     dataset: str
+    stride: float
+    fold: int
     acc: float
     f1micro: float
     f1macro: float
@@ -44,8 +45,9 @@ class Database():
             ('exp','integer','not null'),
             ('nclass','integer','not null'),
             ('dnn','integer','not null'),
-            ('fold','integer','not null'),
             ('dataset','text','not null'),
+            ('stride','real','not null'),
+            ('fold','integer','not null'),
             ('acc','real','not null'),
             ('f1micro','real','not null'),
             ('f1macro','real','not null'),
@@ -58,7 +60,7 @@ class Database():
         ]
         self.columns = [e[0] for e in self.table_entries]
         #self.columns = ['exp','nclass','dnn','fold','dataset','acc','f1','stopepoch','bestepoch','label']
-        self.keys = ['exp','nclass','dnn','fold','dataset']
+        self.keys = ['exp','nclass','dnn','dataset','stride','fold']
         create_tb_sql = self.build_create_table_sql(self.table_name,self.table_entries,self.keys)
         self.create_database(create_tb_sql)
 

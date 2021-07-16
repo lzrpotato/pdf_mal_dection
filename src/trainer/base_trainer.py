@@ -4,11 +4,21 @@ from typing import Any, List
 import pytorch_lightning as pl
 from pytorch_lightning import callbacks
 from pytorch_lightning.loggers import TensorBoardLogger
+from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.callbacks import EarlyStopping
 import torch
 
 
 logger = logging.getLogger('training.base_trainer')
+
+def setup_modelcheckpoint(monitor, filename, mode):
+    ckp_cb = ModelCheckpoint(dirpath='model_checkpoint',
+            filename=filename + '-best-model-{epoch:02d}-{val_acc_epoch:.3f}',
+            monitor=monitor,
+            save_top_k=1,
+            mode=mode
+            )
+    return ckp_cb
 
 def setup_logger(exp_name,version=None):
     pl_logger = TensorBoardLogger(
@@ -26,7 +36,7 @@ def setup_earlystop(monitor,patience,mode):
     )
     return earlystop
 
-def get_trainer(gpus, epochs, earlystop, exp_name, version=None):
+def get_trainer(gpus, epochs, earlystop, ckp, exp_name, version=None):
     trainer = pl.Trainer(
         gpus=gpus,
         #auto_select_gpus = True,
@@ -34,7 +44,7 @@ def get_trainer(gpus, epochs, earlystop, exp_name, version=None):
         progress_bar_refresh_rate=0.5,
         flush_logs_every_n_steps=100,
         logger=setup_logger(exp_name, version),
-        callbacks=[earlystop],
+        callbacks=[earlystop, ckp],
     )
     return trainer
 
@@ -115,3 +125,6 @@ class BaseTrainer(pl.LightningModule):
         
     def get_early_stop(self, patience):
         return setup_earlystop('val_acc_epoch', patience, 'max')
+
+    def get_checkpoint_callback(self, filename):
+        return setup_modelcheckpoint('val_acc_epoch', filename, 'max')

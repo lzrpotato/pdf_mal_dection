@@ -19,4 +19,5 @@ logging/
 kfold/*
 examples/
 *.7z
+model_checkpoint/*
 !.gitignore

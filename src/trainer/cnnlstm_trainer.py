@@ -1,16 +1,18 @@
 import argparse
 import logging
-import time
 import os
+import time
 
 import torch.nn.functional as F
 from src.database.expe_dm import Database, Results
 from src.dataloader.ts_dataloader import TSDataLoader
 from src.model.CNN_LSTM import CNN_LSTM
-from src.trainer.base_trainer import BaseTrainer, get_trainer, setup_earlystop
+from src.trainer.base_trainer import (BaseTrainer, get_trainer,
+                                      setup_earlystop, setup_modelcheckpoint)
 from src.util.cuda_status import get_num_gpus
 from torch.optim import Adam
 from torch.optim.lr_scheduler import CosineAnnealingLR
+from transformers import get_cosine_schedule_with_warmup
 from torchmetrics import ConfusionMatrix
 from torchmetrics.classification import F1, Accuracy
 
@@ -19,12 +21,16 @@ logger = logging.getLogger('trainer.CNNLSTMTrainer')
 def param_setting(args):
     return f"""ep={args.epochs}_h={args.height}_nl={args.num_layers}{'_sw' if args.slide_window else '_gd'}_pt={args.patience}{'_bilstm' if args.bidirection else ''}"""
 
+def unique_name(exp_keys):
+    return f"""exp={exp_keys['exp']}_nclass={exp_keys['nclass']}_dnn={exp_keys['dnn']}_ds={exp_keys['dataset']}_stride={exp_keys['stride']}_fold={exp_keys['fold']}"""
+
 def test_results_to_results(exp_keys, test_result, early_stop, label):
     r = Results(exp_keys['exp'],
                 exp_keys['nclass'],
                 exp_keys['dnn'],
-                exp_keys['fold'],
                 exp_keys['dataset'],
+                exp_keys['stride'],
+                exp_keys['fold'],
                 test_result['test_acc'],
                 test_result['test_f1micro'],
                 test_result['test_f1macro'],
@@ -38,7 +44,7 @@ def test_results_to_results(exp_keys, test_result, early_stop, label):
 
 def train(args):
     args.determ = True
-    dl = TSDataLoader(args.dataset, batch_size=args.batch_size)
+    dl = TSDataLoader(args.dataset, batch_size=args.batch_size, nfold=args.nfold)
     dl.setup()
     args.nclass = dl.nclass
     args.nc = dl.nc
@@ -66,22 +72,23 @@ def train(args):
     for i in range(dl.nfold):
         if args.fold != i:
             continue
-        exp_keys = {'exp':args.exp, 'nclass': args.nclass, 'dnn': f'CNN_LSTM_{dnn_mode}', 'fold':i, 'dataset':args.dataset}
+        exp_keys = {'exp':args.exp, 'nclass': args.nclass, 'dnn': f'CNN_LSTM_{dnn_mode}', 'dataset':args.dataset, 'stride': args.stride ,'fold':i}
         if db.check_finished(exp_keys):
             continue
         model = CNNLSTMTrainer(args, dl.class_to_index)
         
         early_stop = model.get_early_stop(patience=args.patience)
+        ckp_cb = model.get_checkpoint_callback(unique_name(exp_keys))
         jobid = os.environ['SLURM_JOB_ID']
         if jobid is not None:
             version = f'{jobid}_fold_{i}_{time.strftime("%h-%d-%Y-%H:%M:%S")}'
         else:
             version = f'fold_{i}_{time.strftime("%h-%d-%Y-%H:%M:%S")}'
-        trainer = get_trainer(args.gpus, args.epochs, early_stop, param_setting(args), version)
+        trainer = get_trainer(args.gpus, args.epochs, early_stop, ckp_cb, unique_name(exp_keys), version)
         
         dl.get_fold(i)
         trainer.fit(model,train_dataloader=dl.train_dataloader,val_dataloaders=dl.val_dataloader)
-        test_result = trainer.test(model,test_dataloaders=dl.test_dataloader)[0]
+        test_result = trainer.test(ckpt_path=ckp_cb.best_model_path, test_dataloaders=dl.test_dataloader)[0]
         
         ## convert test_result dictionary to Result class object
         r = test_results_to_results(exp_keys, test_result, early_stop, param_setting(args))
@@ -90,7 +97,15 @@ def train(args):
         resuls.append(test_result)
         logger.info('test results {}'.format(test_result))
     
-    logger.info('all results \n{}'.format(db.get_by_query_as_dataframe({'exp':args.exp, 'nclass': args.nclass, 'dnn': f'CNN_LSTM_{dnn_mode}','dataset':args.dataset})))
+    logger.info('all results \n{}'.format(
+            db.get_by_query_as_dataframe(
+                {   'exp':args.exp, 
+                    'nclass': args.nclass,
+                    'dnn': f'CNN_LSTM_{dnn_mode}',
+                    'dataset':args.dataset,
+                    'stride':args.stride,
+            })
+        ))
 
 def setup_arg():
     parser = argparse.ArgumentParser()
@@ -128,8 +143,10 @@ def setup_arg():
     parser.add_argument('--fold', type=int, default=0,
                             help='The fold number for current training')
     parser.add_argument('--stride', type=float, default=1/2, help='Stride, 1/2 or 3/4 of the window size')
-    parser.add_argument('--dataset', type=str, default='word2vec_skipgram', help='dataset ')
+    parser.add_argument('--dataset', type=str, default='word2vec_skipgram', help='dataset ', 
+                        choices=['word2vec_cbow','word2vec_skipgram','byte'])
     parser.add_argument('--bidirection', action='store_true', default=False, help='bidirection for lstm')
+    parser.add_argument('--nfold', type=int, default=10, help='nfold cross-validation', choices=[5,10])
     return parser.parse_args()
 
 
@@ -173,12 +190,12 @@ class CNNLSTMTrainer(BaseTrainer):
     
     def metrics(self, phase, pred, batch):
         X, label = batch
-        self.acc_score(pred, label)
+        acc = self.acc_score(pred, label)
         self.f1_score_micro(pred, label)
         self.f1_score_macro(pred, label)
         self.f1_score_none(pred, label)
         self.confmx(pred, label)
-        self.log(f'{phase}_acc_step', self.acc_score, sync_dist=True, prog_bar=True)
+        self.log(f'{phase}_acc_step', acc, sync_dist=True, prog_bar=True)
 
     def metrics_end(self, phase):
         acc_score = self.acc_score.compute()
@@ -210,9 +227,11 @@ class CNNLSTMTrainer(BaseTrainer):
     def configure_optimizers(self):
         optimizer = Adam(self.model.parameters(),
                 lr=self.args.lr, weight_decay=self.args.weight_decay)
-        scheduler = CosineAnnealingLR(optimizer, self.args.epochs)
+        scheduler1 = get_cosine_schedule_with_warmup(optimizer,
+                    num_warmup_steps=7, num_training_steps=self.args.epochs)
+        #scheduler = CosineAnnealingLR(optimizer, self.args.epochs)
         return {
             'optimizer': optimizer, 
-            'lr_scheduler': scheduler
+            'lr_scheduler': scheduler1
         }
 
