@@ -1,6 +1,14 @@
 import logging
 from typing import Any, List
 
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.optim import Adam
+from torch.optim.lr_scheduler import CosineAnnealingLR
+from torchmetrics import ConfusionMatrix
+from torchmetrics.classification import F1, Accuracy
+from transformers import get_cosine_schedule_with_warmup, get_cosine_with_hard_restarts_schedule_with_warmup
+
 import pytorch_lightning as pl
 from pytorch_lightning import callbacks
 from pytorch_lightning.loggers import TensorBoardLogger
@@ -13,7 +21,7 @@ logger = logging.getLogger('training.base_trainer')
 
 def setup_modelcheckpoint(monitor, filename, mode):
     ckp_cb = ModelCheckpoint(dirpath='model_checkpoint',
-            filename=filename + '-best-model-{epoch:02d}-{val_acc_epoch:.3f}',
+            filename=filename + '-{epoch:02d}-{val_acc_epoch:.3f}',
             monitor=monitor,
             save_top_k=1,
             mode=mode
@@ -40,8 +48,9 @@ def get_trainer(gpus, epochs, earlystop, ckp, exp_name, version=None):
     trainer = pl.Trainer(
         gpus=gpus,
         #auto_select_gpus = True,
+        #precision=16,
         max_epochs=epochs,
-        progress_bar_refresh_rate=0.5,
+        progress_bar_refresh_rate=0.2,
         flush_logs_every_n_steps=100,
         logger=setup_logger(exp_name, version),
         callbacks=[earlystop, ckp],
@@ -50,42 +59,89 @@ def get_trainer(gpus, epochs, earlystop, ckp, exp_name, version=None):
 
 
 class BaseTrainer(pl.LightningModule):
-    def __init__(self):
+    def __init__(self, nclass):
         super(BaseTrainer,self).__init__()
+        self.all_metrics = nn.ModuleDict()
+        for phase in ['train','val', 'test']:
+            self.all_metrics[phase+'_metrics'] = nn.ModuleDict({
+                    "acc": Accuracy(),
+                    "f1macro": F1(num_classes=nclass,average='macro'),
+                    "f1micro": F1(num_classes=nclass,average='micro'),
+                    "f1none": F1(num_classes=nclass,average='none'),
+                    "confmx": ConfusionMatrix(nclass)
+                })
 
 
     def forward(self, batch):
-        pass 
+        X, y = batch
+        y_hat = self.model(X)
+        return y_hat
 
-    def loss(self, pred, batch):
-        pass
-
-    def configure_optimizers(self):
-        pass
-
-    def metrics(self, phase, pred, batch):
-        pass
+    def loss(self, pred, label):
+        logger.debug('loss {} {}'.format(pred, label))
+        loss = F.cross_entropy(pred, label)
+        return loss
+    
+    def metrics(self, phase, pred, label):
+        phase_metrics = self.all_metrics[phase+'_metrics']
+        for mk, metric in phase_metrics.items():
+            result = metric(pred,label)
+            if mk == 'acc':
+                self.log(f'{phase}_acc_step', result, sync_dist=True, prog_bar=True, batch_size=self.args.batch_size)
 
     def metrics_end(self, phase):
-        pass
+        metrics = {}
+        phase_metrics = self.all_metrics[phase+'_metrics']
+        for mk, metric in phase_metrics.items():
+            metrics[mk] = metric.compute()
+            metric.reset()
+
+        self.log_epoch_end(phase, metrics)
+
+    def log_epoch_end(self, phase, metrics):
+        self.log(f'{phase}_acc_epoch', metrics['acc'])
+        self.log(f'{phase}_f1micro', metrics['f1micro'])
+        self.log(f'{phase}_f1macro', metrics['f1macro'])
+        self.log(f'{phase}_fbenign', metrics['f1none'][self.class_to_index['benign']])
+        self.log(f'{phase}_fmal', metrics['f1none'][self.class_to_index['malicious']])
+        self.log(f'{phase}_acc', metrics['acc'])
+        
+
+        logger.info(f'[{phase}_acc_epoch] {metrics["acc"]} at {self.current_epoch}')
+        logger.info(f'[{phase}_f1_score] {metrics["f1micro"]}')
+        logger.info(f'[{phase}_f1_score_macro] {metrics["f1macro"]}')
+        logger.info(f"[{phase}_fbenign] {metrics['f1none'][self.class_to_index['benign']]}" )
+        logger.info(f"[{phase}_fmal] {metrics['f1none'][self.class_to_index['malicious']]}")
+        logger.info(f'[{phase}_confmx] \n {metrics["confmx"].type(torch.long)}')
+
+
+    def configure_optimizers(self):
+        optimizer = Adam(self.model.parameters(),
+                lr=self.args.lr, weight_decay=self.args.weight_decay)
+        scheduler1 = get_cosine_schedule_with_warmup(optimizer,
+                    num_warmup_steps=7, num_training_steps=self.args.epochs)
+        scheduler2 = get_cosine_with_hard_restarts_schedule_with_warmup(optimizer,
+                num_warmup_steps=7, num_training_steps=self.args.epochs,)
+        #scheduler = CosineAnnealingLR(optimizer, self.args.epochs)
+        return {
+            'optimizer': optimizer, 
+            'lr_scheduler': scheduler1
+        }
 
     def shared_my_step(self, batch, batch_nb, phase):
         # batch
         y_hat = self.forward(batch)
-        loss = self.loss(y_hat, batch)
+        loss = self.loss(y_hat, batch[1])
         
         # acc
         a, y_hat = torch.max(y_hat, dim=1)
 
-        self.log(f'{phase}_loss_step', loss, sync_dist=True, prog_bar=True)
-        self.log(f'{phase}_loss_epoch', loss, sync_dist=True, on_step=False, on_epoch=True, prog_bar=True)
+        self.log(f'{phase}_loss_step', loss, sync_dist=True, prog_bar=True, batch_size=self.args.batch_size)
+        self.log(f'{phase}_loss_epoch', loss, sync_dist=True, on_step=False, on_epoch=True, prog_bar=True, batch_size=self.args.batch_size)
 
-        self.metrics(phase, y_hat, batch)
-        
+        self.metrics(phase, y_hat, batch[1])
+
         return loss
-
-    def epoch_end(self, outputs, phase):
-        self.metrics_end(phase)
 
     def training_step(self, batch, batch_nb):
         phase = 'train'
@@ -94,7 +150,7 @@ class BaseTrainer(pl.LightningModule):
 
     def training_epoch_end(self, outputs) -> None:
         phase = 'train'
-        self.epoch_end(outputs, phase)
+        self.metrics_end(phase)
 
     def validation_step(self, batch, batch_nb):
         phase = 'val'
@@ -103,25 +159,25 @@ class BaseTrainer(pl.LightningModule):
 
     def validation_epoch_end(self, outputs: List[Any]) -> None:
         phase = 'val'
-        self.epoch_end(outputs, phase)
+        self.metrics_end(phase)
 
     def test_step(self, batch, batch_nb):
         phase = 'test'
         # fwd
         y_hat = self.forward(batch)
-        loss = self.loss(y_hat, batch)
+        loss = self.loss(y_hat, batch[1])
         # acc
         a, y_hat = torch.max(y_hat, dim=1)
 
-        self.log(f'{phase}_loss_step', loss, sync_dist=True, prog_bar=True)
-        self.log(f'{phase}_loss_epoch', loss, sync_dist=True, on_step=False, on_epoch=True, prog_bar=True)
-        self.metrics(phase, y_hat, batch)
+        self.log(f'{phase}_loss_step', loss, sync_dist=True, prog_bar=True, batch_size=self.args.batch_size)
+        self.log(f'{phase}_loss_epoch', loss, sync_dist=True, on_step=False, on_epoch=True, prog_bar=True, batch_size=self.args.batch_size)
+        self.metrics(phase, y_hat, batch[1])
         
         return 
 
     def test_epoch_end(self, outputs: List[Any]) -> None:
         phase = 'test'
-        self.epoch_end(outputs, phase)
+        self.metrics_end(phase)
         
     def get_early_stop(self, patience):
         return setup_earlystop('val_acc_epoch', patience, 'max')

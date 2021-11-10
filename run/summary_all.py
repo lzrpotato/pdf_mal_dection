@@ -18,6 +18,20 @@ logger.setLevel(logging.INFO)
 logger.info('[summary_all]')
 
 if __name__ == '__main__':
-    db_name = 'exp_cnn_lstm_sw_1.db'
-    s = Summary(db_name)
-    s.read_database()
+    # db_names = ['exp_cnn_lstm_sw_1.db','exp_cnn.db','exp_pcnn_lstm_sw_1.db',
+    #     'exp_cnn_attn_sw_1.db','exp_pcnn_attn_sw_1.db','exp_FCN_CA_sw_1.db',
+    #     'exp_cnn_tran_sw_1.db','exp_fcn_tran_sw_1.db','exp_CNN_CA_sw_1.db',
+    #     'exp_MSFCNCA_sw_1.db', 'exp_MSFCN1CATH_sw_1.db','exp_MSFCN1CATHCA_sw_1.db',
+    #     'exp_MSFCNCATH_sw_1.db','exp_MSFCNCATHCA_sw_1.db']
+
+    db_names = []
+    for fn in os.listdir('src/database/'):
+        if fn.endswith('.db'):
+            if 'final_exp' not in fn:
+                continue
+            db_names.append(fn)
+    db_names = sorted(db_names,reverse=True)
+    for db_name in db_names:
+        s = Summary(db_name)
+        s.savedata()
+        s.get_average_folds()

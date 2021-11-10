@@ -18,6 +18,6 @@ logger.setLevel(logging.INFO)
 logger.info('[summary_all]')
 
 if __name__ == '__main__':
-    db_name = 'exp_cnn_lstm_sw_1.db'
+    db_name = 'final_exp.db'
     db = Database(db_name)
     db.delete_all_entry()

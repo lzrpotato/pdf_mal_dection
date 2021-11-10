@@ -1,3 +1,4 @@
+from collections import defaultdict
 from .base_dataset import BaseDataset
 import os
 from pathlib import Path
@@ -22,9 +23,12 @@ def byte_stream_to_int_array(bytes_array, nbyte):
     integer_array = np.frombuffer(bytes_array, dtype=np.dtype(f'uint{nbyte*8}'))
     return integer_array
 
-def byte_plot(bytes_array, nbyte: int = 1) -> np.ndarray:
+def byte_plot(bytes_array, nbyte: int = 1, embedding=False) -> np.ndarray:
     byte_map = byte_stream_to_int_array(bytes_array,nbyte)
-    return byte_normal(byte_map, nbyte)
+    if embedding:
+        return byte_map
+    else:
+        return byte_normal(byte_map, nbyte)
 
 def byte_normal(byte_map, nbyte):
     nbm = byte_map / ((256//nbyte)-1)
@@ -96,13 +100,17 @@ def padding(X):
     return new_X
 
 class PDFDataset(BaseDataset):
-    def __init__(self, plot_strategy, nbyte=1):
+    def __init__(self, plot_strategy, nbyte=1, embedding=False):
         """
         nbyte: number of bytes for each pixel
         """
         super().__init__()
         self.name = 'pdf_dataset'
-        self.nbyte = nbyte
+        if not isinstance(nbyte,list):
+            self.nbyte = [nbyte]
+        else:
+            self.nbyte = nbyte
+        self.embedding = embedding
         rpath = get_project_root()
         self.dpath = os.path.join(rpath,'dataset')
         self.plot_strategy = plot_strategy
@@ -113,7 +121,7 @@ class PDFDataset(BaseDataset):
     @property
     def key_name(self):
         if self.plot_strategy == 'byte':
-            return f'{self.name}_{self.plot_strategy}_nb={self.nbyte}'
+            return f'{self.name}_{self.plot_strategy}_nb={self.nbyte[0]}'
         else:
             return f'{self.name}_{self.plot_strategy}'
 
@@ -121,40 +129,43 @@ class PDFDataset(BaseDataset):
         pclean = os.path.join(self.dpath,'CLEAN_PDF_9000_files')
         pmal = os.path.join(self.dpath,'MALWARE_PDF_PRE_04-2011_10982_files')
 
-        data_by_class = {'benign':None,'malicious':None}
+        data_by_class = {'benign':{},'malicious':{}}
         if self.plot_strategy == 'byte':
-            nbyte = self.nbyte
-            data_by_class['benign'] = load_pdf(f'byte_c=b_nb={nbyte}', pclean, byte_plot, nbyte=nbyte)
-            data_by_class['malicious'] = load_pdf(f'byte_c=m_nb={nbyte}', pmal, byte_plot, nbyte=nbyte)
-            logger.info(f'Using {self.plot_strategy} plot strategy with byte size {nbyte}')
+            for nbyte in self.nbyte:
+                benign_dataset = f'byte_c=b_nb={nbyte}' + ('' if not self.embedding else '_embed' )
+                mal_dataset = f'byte_c=m_nb={nbyte}' + ('' if not self.embedding else '_embed' )
+                data_by_class['benign'][nbyte] = load_pdf(benign_dataset, pclean, byte_plot, nbyte=nbyte)
+                data_by_class['malicious'][nbyte] = load_pdf(mal_dataset, pmal, byte_plot, nbyte=nbyte)
+            logger.info(f'Using {self.plot_strategy} plot strategy with byte size {self.nbyte}')
         elif self.plot_strategy == 'markov':
             data_by_class['benign'] = load_pdf('markov_c=b',pclean, markov_plot)
             data_by_class['malicious']  = load_pdf('markov_c=m',pmal, markov_plot)
             logger.info(f'Using {self.plot_strategy} plot strategy')
 
-
+        data_benign = data_by_class['benign'][self.nbyte[0]]
+        data_mal = data_by_class['malicious'][self.nbyte[0]]
         ### class length
-        nb = len(data_by_class['benign'])
-        nm = len(data_by_class['malicious'])
+        nb = len(data_benign)
+        nm = len(data_mal)
 
         ### create labels
         labels = []
-        for k in data_by_class.keys():
-            n = len(data_by_class[k])
+        for k, n in [('benign',nb), ('malicious',nm)]:
             label = np.repeat(k,n)
             labels.extend(label)
         index, _ = self._find_class_(labels,one_hot=False)
         self.labels = index
 
         ### create input X
-        X = []
-        for k in data_by_class.keys():
-            X.extend(data_by_class[k])
+        X = defaultdict(list)
+        for nbyte in self.nbyte:
+            for k in data_by_class.keys():
+                X[nbyte].extend(data_by_class[k][nbyte])
         self.X = X
         #self.X = padding(f'padded_{self.key_name}',X)
 
         ### feature size
-        self.fea_size = self.X[0].shape[0]
+        self.fea_size = self.X[self.nbyte[0]][0].shape[0]
         ### channel size
         self.nc = 1
 
@@ -164,11 +175,17 @@ class PDFDataset(BaseDataset):
         self._to_tensor()
 
     def _to_tensor(self):
-        self.X = [torch.tensor(r,dtype=torch.float32) for r in self.X]
+        if self.embedding:
+            self.X = {nbyte: [torch.tensor(r,dtype=torch.long) for r in x] for nbyte, x in self.X.items()}
+        else:
+            self.X = {nbyte:[torch.tensor(r,dtype=torch.float32) for r in x] for nbyte, x in self.X.items()}
         self.labels = [torch.tensor(r,dtype=torch.long) for r in self.labels]
 
     def __len__(self):
         return len(self.labels)
 
     def __getitem__(self, idx):
-        return self.X[idx], self.labels[idx]
+        # if len(self.nbyte) == 1:
+        #     return self.X[self.nbyte[0]][idx], self.labels[idx]
+        # else:
+            return [self.X[nbyte][idx] for nbyte in self.nbyte], self.labels[idx]

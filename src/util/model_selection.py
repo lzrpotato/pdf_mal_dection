@@ -13,6 +13,25 @@ logger = logging.getLogger('utils.model_selection')
 
 __all__ = ['DataSpliter']
 
+def split_on_train(label: np.ndarray, train_count: int):
+    index = np.arange(len(label))
+    train_index = []
+    test_index = []
+    for l in np.unique(label):
+        l_index = index[label==l]
+        selector = np.zeros(len(l_index), dtype=bool)
+        train = np.random.choice(range(len(l_index)), train_count, replace=False)
+        selector[train] = True
+        train = selector
+        test = ~selector
+        train_index.append(l_index[train])
+        test_index.append(l_index[test])
+        
+    train_index = np.concatenate(train_index)
+    test_index = np.concatenate(test_index)
+    return train_index, test_index
+
+
 
 class DataSpliter():
     def __init__(self, X, y, prefix, strategy, cv=False, nfold=5, deterministic=True):
@@ -236,22 +255,36 @@ class DatasetSpliter():
         return train, val, test
 
     def _split_strategy(self, y, strategy):
-        kf = StratifiedKFold(n_splits=self.nfold)
-        for train_index, test_index in kf.split(np.zeros(len(y)), y):
-            val_index = None
-            if strategy == 'tvt':
-                y_train = itemgetter(*train_index)(y)
-                idx_train, idx_val = train_test_split(
-                    train_index, train_size=0.8, random_state=1, shuffle=True, stratify=y_train)
+        if strategy in ['tvt','ttv']:
+            kf = StratifiedKFold(n_splits=self.nfold)
+            for train_index, test_index in kf.split(np.zeros(len(y)), y):
+                val_index = None
+                if strategy == 'tvt':
+                    y_train = itemgetter(*train_index)(y)
+                    idx_train, idx_val = train_test_split(
+                        train_index, train_size=0.8, random_state=1, shuffle=True, stratify=y_train)
 
-                train_index = idx_train
-                val_index = idx_val
-            elif strategy == 'ttv':
+                    train_index = idx_train
+                    val_index = idx_val
+                elif strategy == 'ttv':
+                    y_test = itemgetter(*test_index)(y)
+                    idx_val, idx_test = train_test_split(
+                        test_index, train_size=0.5, random_state=1, shuffle=True, stratify=y_test)
+
+                    test_index = idx_test
+                    val_index = idx_val
+                
+                yield train_index, val_index, test_index
+        elif strategy in ['6000']:
+            train_index, test_index = split_on_train(y, train_count=6000)
+            kf = StratifiedKFold(n_splits=self.nfold)
+            for train_index, test_index in kf.split(np.zeros(len(y)), y):
+                val_index = None
                 y_test = itemgetter(*test_index)(y)
                 idx_val, idx_test = train_test_split(
-                    test_index, train_size=0.5, random_state=1, shuffle=True, stratify=y_test)
-
+                    test_index, train_size=0.2, random_state=1, shuffle=True, stratify=y_test)
+            
                 test_index = idx_test
                 val_index = idx_val
             
-            yield train_index, val_index, test_index
+                yield train_index, val_index, test_index

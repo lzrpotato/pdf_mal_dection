@@ -19,5 +19,9 @@ logging/
 kfold/*
 examples/
 *.7z
+results/
 model_checkpoint/*
 !.gitignore
+.ipynb_checkpoints/
+slurm_gpustat.py
+*.ipynb

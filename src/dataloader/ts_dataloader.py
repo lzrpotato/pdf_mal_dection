@@ -24,15 +24,18 @@ def collate_fn(batch):
     return X, label
 
 class TSDataLoader(pl.LightningDataModule):
-    def __init__(self, dataset_name, batch_size=32, nfold=10, shuffle=True,deterministic=True,num_workers=8):
+    def __init__(self, dataset_name, strategy='tvt', nbyte=1, batch_size=32, nfold=10,shuffle=True,deterministic=True,num_workers=8,embedding=False):
         super().__init__()
         self.dataset_name = dataset_name
+        self.strategy = strategy
+        self.nbyte = nbyte
         self.batch_size=batch_size
         self.nfold = nfold
         self.shuffle = shuffle
         self.determ = deterministic
         self.num_workers = num_workers
-    
+        self.embedding = embedding
+
     def prepare_data(self):
         # download, split, etc...
         # only called on 1 GPU/TPU in distributed
@@ -44,8 +47,11 @@ class TSDataLoader(pl.LightningDataModule):
         elif self.dataset_name == 'word2vec_cbow':
             dataset = PDFW2VDataset(self.dataset_name)
         elif self.dataset_name == 'byte':
-            dataset = PDFDataset(self.dataset_name)
-        self.dss = DatasetSpliter(dataset, dataset.key_name, strategy='tvt', nfold=self.nfold, deterministic=self.determ)
+            dataset = PDFDataset(self.dataset_name, nbyte=self.nbyte, embedding=self.embedding)
+        elif self.dataset_name == 'byte_fixed':
+            dataset = PDFDataset(self.dataset_name, embedding=self.embedding)
+
+        self.dss = DatasetSpliter(dataset, dataset.key_name, strategy=self.strategy, nfold=self.nfold, deterministic=self.determ)
         self.dss.setup()
         self.nclass = dataset.nclass
         self.nc = dataset.nc
@@ -80,14 +86,11 @@ class TSDataLoader(pl.LightningDataModule):
         dataloaders['test'] = self._to_dataloader(test, False, self.batch_size)
         self.dataloaders = dataloaders
 
-    @property
     def train_dataloader(self) -> DataLoader:
         return self.dataloaders['train']
-    
-    @property
+
     def val_dataloader(self) -> DataLoader:
         return self.dataloaders['val']
-    
-    @property
+
     def test_dataloader(self) -> DataLoader:
         return self.dataloaders['test']

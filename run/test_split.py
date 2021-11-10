@@ -27,8 +27,8 @@ if jobid is not None:
     filehandler = logging.FileHandler(f"logging/cnnlstm_{jobid}_{time.strftime('%Y-%m-%d-%H:%M:%S')}_{os.getpid()}")
 else:
     filehandler = logging.FileHandler(f"logging/cnnlstm_{time.strftime('%Y-%m-%d-%H:%M:%S')}_{os.getpid()}")
-filehandler.setFormatter(formatter)
-logger.addHandler(filehandler)
+# filehandler.setFormatter(formatter)
+# logger.addHandler(filehandler)
 logger.setLevel(logging.DEBUG)
 
 def pdf_dataloader():
@@ -36,7 +36,8 @@ def pdf_dataloader():
     dl = TSDataLoader('byte')
     dl.setup()
     dl.get_fold(0)
-    
+    for batch in dl.train_dataloader():
+        logger.debug(f'{batch}')
 
 if __name__ == '__main__':
     pdf_dataloader()

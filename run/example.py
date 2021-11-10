@@ -9,6 +9,22 @@ from torchvision import datasets, transforms
 from torch.optim.lr_scheduler import StepLR
 
 
+class ModelBase(nn.Module):
+    def __init__(self):
+        pass
+
+    def modify_model(self):
+        pass
+
+    def random_weight(self):
+        pass
+
+    def pretrained_weight(self):
+        pass
+
+class VGG(ModelBase):
+    
+
 class Net(nn.Module):
     def __init__(self):
         super(Net, self).__init__()

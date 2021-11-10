@@ -123,7 +123,7 @@ class LSTM_rnn(nn.Module):
             self.pooling = nn.AdaptiveAvgPool1d(1)
         
         self.flatten = nn.Flatten(1,-1)
-        self.out_dim = self.hidden
+        self.out_dim = self.hidden * (2 if self.bidirection else 1)
 
     def forward(self, x):
         h0 = self.h0.to(x.device)

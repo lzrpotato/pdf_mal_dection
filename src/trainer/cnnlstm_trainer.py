@@ -79,7 +79,7 @@ def train(args):
         
         early_stop = model.get_early_stop(patience=args.patience)
         ckp_cb = model.get_checkpoint_callback(unique_name(exp_keys))
-        jobid = os.environ['SLURM_JOB_ID']
+        jobid = os.environ.get('SLURM_JOB_ID')
         if jobid is not None:
             version = f'{jobid}_fold_{i}_{time.strftime("%h-%d-%Y-%H:%M:%S")}'
         else:

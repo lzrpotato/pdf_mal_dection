@@ -44,7 +44,7 @@ class Database():
         self.table_entries = [
             ('exp','integer','not null'),
             ('nclass','integer','not null'),
-            ('dnn','integer','not null'),
+            ('dnn','text','not null'),
             ('dataset','text','not null'),
             ('stride','real','not null'),
             ('fold','integer','not null'),
@@ -133,6 +133,7 @@ class Database():
         finally:
             if conn:
                 conn.close()
+    
     def save_status(self, p):
         logger.info('[database] save_status')
         conn = None
@@ -236,6 +237,34 @@ class Database():
                 conn.close()
         
         return res
+
+    def get_average_folds(self):
+        res = None
+        conn = None
+        try:
+            conn = self.connect()
+            conn.row_factory = lite.Row
+            cur = conn.cursor()
+            cur.execute('PRAGMA busy_timeout=%d' % (self.timeout))
+            
+            k = self.keys.copy()
+            k.remove('fold')
+            select_str = f"""select {','.join(k)},avg(acc),avg(f1macro), count(acc)  from {self.table_name}\n""" + \
+                         f"""group by {','.join(k)};"""
+            cur.execute(select_str)
+            res = cur.fetchall()
+
+        except lite.Error as e:
+            logger.error('[read_status] error {}'.format(e.args[0]))
+
+        finally:
+            if conn:
+                conn.close()
+        
+        if not res:
+            return None
+
+        return pd.DataFrame(res, columns=res[0].keys())
 
     def get_by_query_as_dataframe(self, query):
         res = self.read_by_keys(query)
